@@ -67,6 +67,22 @@ jobs:
         run: python -m build
         working-directory: SerenGanglion
 
+      # The .deb carries the wheel just built, the newest Sinew this pyproject allows, and pyzmq built
+      # for the module (ARM Linux, Python 3.10), each recorded with its checksum in BUNDLED. It goes to
+      # deb/, never dist/: dist/ is what PyPI gets, and PyPI takes no .deb.
+      - name: Build the module's .deb
+        working-directory: SerenGanglion
+        run: |
+          set -e
+          mkdir -p wheels deb
+          cp dist/*.whl wheels/
+          pip download "seren-sinew>=5.10" --no-deps -d wheels
+          pip download pyzmq --only-binary=:all: --platform manylinux2014_aarch64 --python-version 3.10 --no-deps -d wheels
+          VERSION=$(ls dist/*.whl | sed -E 's#.*/seren_ganglion-([^-]+)-.*#\1#')
+          python tools/build_deb.py --wheels wheels --version "$VERSION" --out deb --mtime "$(git log -1 --format=%ct)"
+          (cd dist && sha256sum * ; cd ../deb && sha256sum *) > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Upload dist as artifact (handed to the publish job)
         uses: actions/upload-artifact@v4
         with:
@@ -76,7 +92,10 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: SerenGanglion/dist/*
+          files: |
+            SerenGanglion/dist/*
+            SerenGanglion/deb/*.deb
+            SerenGanglion/SHA256SUMS
 
   pypi-publish:
     needs: [build-and-release]

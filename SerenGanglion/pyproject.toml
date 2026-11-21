@@ -32,6 +32,10 @@ dependencies = [
   "seren-sinew>=5.10",
 ]
 
+[project.scripts]
+# The .deb has its own wrapper in /usr/bin; this is the same command from a pip install.
+seren-ganglion = "seren_ganglion.__main__:main"
+
 [project.optional-dependencies]
 # ZeroMQ, to talk to StackFlow's sys unit. Optional because the module may already
 # carry it, and the wire's own tests don't need it.

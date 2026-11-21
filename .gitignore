@@ -379,3 +379,7 @@ _version.py
 # local venvs (keep all venvs out of git)
 .venv/
 .venv-*/
+# Ganglion build output
+SerenGanglion/wheels/
+SerenGanglion/deb/
+SerenGanglion/SHA256SUMS
