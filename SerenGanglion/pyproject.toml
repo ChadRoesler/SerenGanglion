@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
   # Only its stdlib-only parts are used (seren_sinew.soma, cluster.dtos). On the
-  # module it is pushed in with --no-deps, so it must import without starlette:
+  # module it is bundled into the .deb without its dependencies (README, "Getting it on"), so it must import without starlette:
   # 5.10 is the first release with the lazy front door (tests/test_sinew_on_the_module.py).
   "seren-sinew>=5.10",
 ]

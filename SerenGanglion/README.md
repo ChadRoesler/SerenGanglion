@@ -87,6 +87,73 @@ on for the real stuff". So nothing assumes a network.
 - Whether its USB-C can be a network to a computer (a USB gadget), separate from `adb`. Untested; the
   19 Nov `adb reverse` was refused, and that's a different mechanism.
 
+## Getting it on
+
+**What a person installs is one `.deb`, and the module needs no pip, no venv and no network.**
+
+- **CI builds it on each tag** and attaches it to the GitHub release: `seren-ganglion_<version>_arm64.deb`.
+- **It carries everything inside**, unpacked under `/opt/seren/ganglion/`:
+  - `seren_ganglion` itself;
+  - Sinew (pure Python, imported with the standard library alone; see `tests/test_sinew_on_the_module.py`);
+  - pyzmq built for the module, with ZeroMQ's library bundled inside it.
+- **It always ships its own pyzmq, whatever the module already has.** That's 673 KB against 25 GB free,
+  and in exchange every module runs the same ZeroMQ, whether M5's image has a copy Python can use or not.
+- **A systemd unit**, `seren-ganglion.service`, starts it beside M5's units, with its state in
+  `/var/lib/seren-ganglion`. Installing it also switches off the telnet server on port 23.
+
+Getting the `.deb` onto the module is however the person brings it (microSD, `adb push`, Ethernet),
+then `dpkg -i seren-ganglion_<version>_arm64.deb`.
+
+**The wheels by hand**, for working on it. Ganglion and Sinew are pure Python, so a desktop's pip
+fetches files that work on the module as they are. pyzmq isn't: fetch it for the module's platform
+(Psycheion, 20 Nov; checked the same night, it gives one file,
+`pyzmq-26.4.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl`):
+
+```
+pip download seren-ganglion seren-sinew --no-deps -d ganglion-wheels
+pip download pyzmq --only-binary=:all: --platform manylinux2014_aarch64 --python-version 3.10 --no-deps -d ganglion-wheels
+```
+
+`--no-deps` because Sinew's declared dependencies (starlette and its family) are never imported here.
+On the module, a wheel is a zip: `python3 -m zipfile -e <wheel> /opt/seren/ganglion/lib` needs nothing
+that isn't already there.
+
+**Still to read off the module** (one `adb shell`, read-only), before the `.deb` is written:
+
+| Check | Why |
+|---|---|
+| `python3 --version` | The 3.10 floor |
+| `ldd --version` | The pyzmq wheel needs glibc 2.17 or newer; Ubuntu 22.04 has 2.35 |
+| `ls -la /tmp/rpc.* /tmp/llm/` | StackFlow's sockets match the code we read, and **who may connect**: connecting to a unix socket needs write permission on its file, so read the `w` bits for group and other, not just the names |
+| `systemctl list-units 'llm*'` | How M5 starts its units, so ours starts the same way |
+| `lsblk; mount \| grep -i mmcblk1` | Whether the microSD slot appears, and where |
+
+## Who it runs as
+
+Psycheion, 21 Nov: the ganglion parses whatever the core sends, so a parsing bug as root is a root bug
+on the box we locked `bashexec` away from. M5's units run as root, and their sockets may admit only root.
+
+- **If the sockets let a group write,** the `.deb` makes a `ganglion` system user in that group, and the
+  unit runs as it.
+- **If they're root-only, it runs as root, boxed by systemd**, and this section says so until it's fixed:
+
+  ```
+  NoNewPrivileges=yes
+  CapabilityBoundingSet=
+  ProtectSystem=strict
+  ReadWritePaths=/var/lib/seren-ganglion /tmp
+  ProtectHome=yes
+  PrivateNetwork=yes
+  RestrictAddressFamilies=AF_UNIX
+  ```
+
+  No capabilities, a read-only system apart from its own state and the sockets, and no network at all:
+  path-based unix sockets still work across a private network namespace, so StackFlow is reachable
+  and nothing else is. `PrivateTmp` stays off, because the sockets live in `/tmp`. These need checking
+  against the module's systemd before they are trusted.
+- **We don't change M5's units** to loosen their sockets: a drop-in that changes how their root
+  processes create files would reach well past ours.
+
 ## Layout
 
 | Where | What |
