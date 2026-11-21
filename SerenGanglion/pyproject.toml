@@ -1,0 +1,58 @@
+# ========================================================================
+#  seren-ganglion - our unit on the M5Stack LLM module (AX630C)
+#  Runs on the module's own Linux, beside M5's StackFlow units: Ubuntu 22.04,
+#  Python 3.10, no network of its own. So it stays lean: Sinew's stdlib-only
+#  shapes and ZeroMQ, nothing else. Packaged as a .deb for the module; this is
+#  the Python package inside it.
+# ========================================================================
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seren-ganglion"
+description = "Seren's reflexes on the LLM module: a StackFlow unit that listens, plays and looks after itself, and tells the core only what it needs."
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+# The module's Python. Raise it and the module falls off.
+requires-python = ">=3.10"
+dynamic = ["version"]
+keywords = ["seren", "stackchan", "m5stack", "stackflow", "ax630c"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Operating System :: POSIX :: Linux",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
+dependencies = [
+  # Only its stdlib-only parts are used (seren_sinew.soma, cluster.dtos). On the
+  # module it is pushed in with --no-deps: see the README, "Getting it on".
+  "seren-sinew>=5.9",
+]
+
+[project.optional-dependencies]
+# ZeroMQ, to talk to StackFlow's sys unit. Optional because the module may already
+# carry it, and the wire's own tests don't need it.
+zmq = ["pyzmq>=25"]
+test = ["pytest>=8"]
+dev = ["pytest>=8", "pyzmq>=25"]
+
+[project.urls]
+Homepage = "https://github.com/ChadRoesler/SerenGanglion"
+Repository = "https://github.com/ChadRoesler/SerenGanglion"
+"Bug Tracker" = "https://github.com/ChadRoesler/SerenGanglion/issues"
+
+[tool.setuptools]
+packages = ["seren_ganglion"]
+
+[tool.setuptools_scm]
+# Inner project dir under the git root, like the rest of the family
+# (SerenGanglion/SerenGanglion/seren_ganglion, git root SerenGanglion/).
+root = ".."
+version_file = "seren_ganglion/_version.py"
+tag_regex = '^v(?P<version>[0-9]+\.[0-9]+\.[0-9]+.*)$'
+fallback_version = "0.0.0.dev0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
