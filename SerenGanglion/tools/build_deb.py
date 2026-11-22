@@ -9,8 +9,8 @@ so the package is assembled here rather than compiled: each wheel is unpacked un
 
 A .deb is an ar archive of three members, in this order: debian-binary, control.tar.gz, data.tar.gz.
 
-No systemd unit yet: it waits for `seren-ganglion run`, and for the module's read-off (who the unit
-runs as, and how M5 starts theirs). Shipping a service that can only fail would be worse than none.
+It ships seren-ganglion.service and enables it on install (postinst); prerm stops it, and disables it
+on remove.
 """
 from __future__ import annotations
 
@@ -44,6 +44,63 @@ WRAPPER = f"""#!/bin/sh
 # seren-ganglion: Seren's unit on the LLM module. Its Python lives in {LIB}, apart from the
 # system's and from M5's. Isolated (-I): the folder you run it from never gets a say.
 exec /usr/bin/python3 -I -c '{launch_code(LIB)}' "$@"
+"""
+
+
+# Shaped like M5's own (llm-sys, llm-skel: root, Restart=always, StartLimitInterval=0, After= and
+# Requires=llm-sys), plus the box (README, "Who it runs as"). Root because every StackFlow socket is
+# root:root srwxr-xr-x (check, 21 Nov); boxed because what it parses comes from outside.
+SERVICE = """[Unit]
+Description=seren-ganglion: Seren's unit on the LLM module
+Documentation=https://github.com/ChadRoesler/SerenGanglion
+After=llm-sys.service
+Requires=llm-sys.service
+# Here, not in the service section, where systemd ignores it (systemd-analyze verify, 21 Nov). M5 writes the
+# old StartLimitInterval, which the service section still takes.
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/seren-ganglion run
+WorkingDirectory=/
+Restart=always
+RestartSec=2
+StateDirectory=seren-ganglion
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/tmp
+ProtectHome=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+POSTINST = """#!/bin/sh
+set -e
+if [ "$1" = "configure" ] && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable seren-ganglion.service
+    systemctl restart seren-ganglion.service
+fi
+"""
+
+PRERM = """#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl stop seren-ganglion.service || true
+    if [ "$1" = "remove" ]; then
+        systemctl disable seren-ganglion.service || true
+    fi
+fi
+"""
+
+POSTRM = """#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
 """
 
 
@@ -128,12 +185,15 @@ def build(wheels: list[Path], version: str, out_dir: Path, mtime: int | None = N
                 data.add(f"{PREFIX}/lib/{item.filename}", z.read(item), 0o755 if mode & 0o111 else 0o644)
     data.add(f"{PREFIX}/BUNDLED", "".join(f"{n}  sha256:{d}\n" for n, d in bundled).encode())
     data.add("usr/bin/seren-ganglion", WRAPPER.encode(), 0o755)
+    data.add("lib/systemd/system/seren-ganglion.service", SERVICE.encode())
 
     installed_kb = max(1, sum(len(d) for d, _ in data.files.values()) // 1024)
     md5 = "".join(f"{hashlib.md5(d).hexdigest()}  {p}\n" for p, (d, _) in sorted(data.files.items()))
     control = _Tree(mtime)
     control.add("control", control_text(version, bundled, installed_kb).encode())
     control.add("md5sums", md5.encode())
+    for name, script in (("postinst", POSTINST), ("prerm", PRERM), ("postrm", POSTRM)):
+        control.add(name, script.encode(), 0o755)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     deb = out_dir / f"{PACKAGE}_{debian_version(version)}_{ARCH}.deb"

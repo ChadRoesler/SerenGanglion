@@ -10,7 +10,7 @@ what it needs. It sits in the Seren family beside
 
 ## What's in it (today)
 
-Early. The pieces under the unit are built and tested; the unit itself is not.
+Early. The unit joins StackFlow and says hello; listening, sounds and LEDs come next.
 
 - **`seren-ganglion check`:** what this module is, read-only. Its Python and C library, the versions it
   carries, StackFlow's sockets and **who may connect to them**, how M5 starts its units, and whether a
@@ -20,7 +20,13 @@ Early. The pieces under the unit are built and tested; the unit itself is not.
   from M5's own C++ (`pzmq.hpp`, `StackFlow.cpp`), standard library only.
 - **The `sys` client** (`seren_ganglion.sys_client`): registering with StackFlow's `sys` unit and calling
   any unit over ZeroMQ. It's the one part that needs pyzmq.
-- **The `.deb`**, built on every release: one file with everything inside, for a module with no network.
+- **`seren-ganglion run`, the unit** (`seren_ganglion.unit`): it answers StackFlow's seven actions.
+  `setup` registers a task with `sys` and pushes a `ganglion.hello` down the serial line to the core:
+  its version, what it carries, and whether its box holds. `taskinfo` and `exit` work. `pause`, `work`,
+  `link` and `unlink` answer -18, "not have unit action!", the way M5's own units do. Nothing in it
+  opens a mic.
+- **The `.deb`**, built on every release: one file with everything inside, for a module with no network,
+  and `seren-ganglion.service`, enabled when it installs.
 
 ## Install
 
@@ -108,12 +114,25 @@ say so, which is the hidden microphone again. So:
 
 1. **The ganglion opens a mic only when the core tells it to.** Never on its own, and never by itself
    after a restart.
-2. **The core doesn't take its word for it.** Every few seconds it asks `sys.lstask`. If anything that
-   captures audio is running (ours, or M5's `audio`, `kws`, `vad`, `asr` or `whisper`), the light is on.
+2. **The core doesn't take its word for it.** Every few seconds it asks `sys.lstask`. If a task that
+   captures audio is set up (ours, or M5's `audio`, `kws`, `vad`, `asr` or `whisper`), the light is on.
+   **Tasks, not services** (Psycheion, 21 Nov): all five of M5's listening services run all day as
+   daemons waiting for a `setup`, so "the service is up" would keep the light on forever and mean
+   nothing. Never build this against `systemctl`.
 3. **No answer counts as listening.** A module that stops replying keeps the light on until it answers.
 
 The ganglion's own "mic open" event is still wanted, for the face's listening look, because it's fast.
 It never decides the light.
+
+**The bench test for the rule is the kernel's own word.** ALSA shows whether a capture stream is
+actually open, whoever opened it. The module has one capture device, and with nothing set up it reads
+`closed` (Chad's module, 21 Nov):
+
+```
+cat /proc/asound/card0/pcm0c/sub0/status
+```
+
+On the bench the light must be on exactly while that says `RUNNING`.
 
 ## Connections: however the person brings it
 
@@ -126,7 +145,7 @@ on for the real stuff". So nothing assumes a network.
 
   | Way | How |
   |---|---|
-  | microSD | Copy it onto the card |
+  | microSD | Copy it onto the card. Unproven: on 21 Nov no card was in, so whether the slot shows up in its Linux is still open |
   | USB-C | `adb push` from a computer |
   | Ethernet, if someone has it | Download it on the module |
   | The UART | Later, through Soma (below). About ten seconds for the `.deb` |
@@ -137,9 +156,13 @@ Psycheion, 21 Nov: the ganglion parses whatever the core sends, so a parsing bug
 on the box we locked `bashexec` away from. M5's units run as root, and their sockets may admit only root.
 Connecting to a unix socket needs write permission on its file, which `check` reports.
 
-- **If the sockets let a group write,** the `.deb` makes a `ganglion` system user in that group, and the
-  unit runs as it.
-- **If they're root-only, it runs as root, boxed by systemd**, and this section says so until it's fixed:
+**Answered by `check` on Chad's module, 21 Nov (v0.3.0): root-only.** Every StackFlow socket
+(`/tmp/rpc.sys` and one per unit, plus `/tmp/llm/5556.sock`) is `root:root`, `srwxr-xr-x`: no group or
+other may connect. M5 starts each unit as its own systemd service, `llm-<unit>.service`.
+
+- **Had the sockets let a group write,** the `.deb` would make a `ganglion` system user in that group.
+  They don't, so:
+- **It runs as root, boxed by systemd**, and this section says so until it's fixed:
 
   ```
   NoNewPrivileges=yes
@@ -158,8 +181,27 @@ Connecting to a unix socket needs write permission on its file, which `check` re
 - **We don't change M5's units** to loosen their sockets. A drop-in that changed how their root
   processes create files would reach well past ours.
 
-**No systemd unit ships yet.** It waits for the unit to exist, and for `check`'s answers on a real
-module. A service that can only fail is worse than none.
+**The service follows M5's own** (`systemctl cat llm-sys llm-skel`, 21 Nov): theirs run as root from
+`/opt/m5stack`, `Restart=always`, `RestartSec=1`, `StartLimitInterval=0`, and every unit but `sys` has
+`After=` and `Requires=llm-sys.service`. Ours, `seren-ganglion.service`, does the same, plus the box
+above. The module's systemd is 249, built with `+SECCOMP`, and the kernel has seccomp (the `Seccomp:`
+line in `/proc/self/status` only exists when it does).
+
+**The unit tests its own box when it starts.** Whether the kernel has seccomp *filters*, which
+`RestrictAddressFamilies` needs, doesn't show from outside. So the first thing it does is try to open
+a network socket: under the box that fails. If it succeeds, the box has a hole, and the unit says so
+in its log and in `taskinfo` rather than carrying on quietly. `PrivateNetwork=yes` still holds the
+line by itself: a network socket in a private namespace reaches nothing but its own loopback.
+
+**The kernel has everything the box needs** (`/proc/config.gz`, 21 Nov): `CONFIG_SECCOMP_FILTER=y`
+and `CONFIG_NET_NS=y`. The self-test stays anyway, for the day a module ships a kernel without them.
+On the NUC's systemd, a process under `RestrictAddressFamilies=AF_UNIX` got "Address family not
+supported by protocol" for a network socket and opened a unix one, which is what the self-test reads.
+
+**The service ships in the `.deb`** and is enabled on install: `lib/systemd/system/seren-ganglion.service`.
+`StartLimitIntervalSec=0` sits in `[Unit]`, where systemd reads it; in `[Service]` it's ignored
+(`systemd-analyze verify` caught it). M5 writes the older `StartLimitInterval`, which `[Service]` still
+takes.
 
 ## Later: Soma installs it for you
 
@@ -199,6 +241,7 @@ A dev version like `0.2.0.dev3` becomes `0.2.0~dev3` in the `.deb`, so dpkg sort
 | Where | What |
 |---|---|
 | `seren_ganglion/check.py` | `seren-ganglion check`, read-only |
+| `seren_ganglion/unit.py` | `seren-ganglion run`: the StackFlow unit |
 | `seren_ganglion/wire.py` | StackFlow's framing. Standard library only |
 | `seren_ganglion/sys_client.py` | RPC to `sys` or any unit over ZeroMQ |
 | `tools/build_deb.py` | The `.deb`, from wheels |
@@ -218,9 +261,10 @@ back the way dpkg reads it, and a real one was checked with dpkg-deb on 21 Nov.
 
 ## What's coming
 
-1. **`check` on a real module:** who the unit runs as, and how M5 starts theirs.
-2. **The unit:** registering with `sys`, serving `setup`, `work` and `exit`, then listening.
-3. **A systemd unit and the install scripts** in the `.deb`, including telnet off.
+1. ~~`check` on a real module~~ done 21 Nov: Python 3.10.12, glibc 2.35, libzmq 4.3.5 loads, sockets root-only, units as `llm-<unit>.service`, systemd 249, the mic `closed` at rest.
+2. ~~The unit joins StackFlow~~ built for 0.4: registers, says hello, `taskinfo`, `exit`. Next is
+   `ganglion.hello` reaching Soma through the core for real, then listening.
+3. ~~A systemd unit~~ ships in 0.4. Still to do: telnet off on install, once we know what serves port 23.
 4. **Its shapes in Sinew**, and the core's half in Soma.
 
 AGPL-3.0-or-later.

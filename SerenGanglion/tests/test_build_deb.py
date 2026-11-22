@@ -70,7 +70,23 @@ def test_control_says_what_it_is_and_what_it_carries(wheels, tmp_path):
     assert "Package: seren-ganglion\n" in control and "Architecture: arm64\n" in control
     assert "Version: 0.2.0\n" in control and "Depends: python3 (>= 3.10)" in control
     assert "pyzmq 26.4.0" in control and "seren-sinew 5.10.0" in control
-    assert "./md5sums" in _tar(members["control.tar.gz"])
+    ctl = _tar(members["control.tar.gz"])
+    assert "./md5sums" in ctl
+    for script in ("./postinst", "./prerm", "./postrm"):
+        assert ctl[script][0].mode == 0o755 and ctl[script][1].startswith(b"#!/bin/sh\nset -e\n")
+    assert b"systemctl enable seren-ganglion.service" in ctl["./postinst"][1]
+
+
+def test_the_service_is_m5s_shape_plus_the_box(wheels, tmp_path):
+    data = _tar(dict(_read_ar(build_deb.build(wheels, "0.2.0", tmp_path, mtime=1).read_bytes()))["data.tar.gz"])
+    lines = data["./lib/systemd/system/seren-ganglion.service"][1].decode().splitlines()
+    for line in ("Requires=llm-sys.service", "After=llm-sys.service", "Restart=always",
+                 "ExecStart=/usr/bin/seren-ganglion run", "PrivateNetwork=yes", "RestrictAddressFamilies=AF_UNIX",
+                 "CapabilityBoundingSet=", "ProtectSystem=strict", "NoNewPrivileges=yes", "ReadWritePaths=/tmp"):
+        assert line in lines, line
+    service = "\n".join(lines)
+    assert "StartLimitIntervalSec=0" in service.split("[Service]")[0]   # in [Service] systemd ignores it
+    assert "PrivateTmp" not in service   # the sockets live in /tmp
 
 
 def test_the_files_land_under_opt_owned_by_root_with_no_bytecode(wheels, tmp_path):
